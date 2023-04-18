@@ -43,7 +43,7 @@ parser.add_argument('--epo',
 parser.add_argument('--mid_dim',
                     default=128,
                     type=int)
-
+#Add arg for running with consecutive split
 parser.add_argument('--splitconsec',
                     dest='splitconsec',
                     action='store_true')
@@ -100,6 +100,9 @@ for x, y in tqdm(loader, total=len(loader)):
     valid_until = tbf.index(-100) if -100 in tbf else 999
     a = OthelloBoardState()
     properties = a.get_gt(tbf[:valid_until], "get_" + args.exp)  # [block_size, ]
+    
+    #Skip computing the activations as we don't need them.
+    
     # act = model(x.to(device))[0, ...].detach().cpu()  # [block_size, f]
     # act_container.extend([_[0] for _ in act.split(1, dim=0)[:valid_until]])
     property_container.extend(properties)
@@ -112,20 +115,17 @@ for x, y in tqdm(loader, total=len(loader)):
     ages = a.get_gt(tbf[:valid_until], "get_age")  # [block_size, ]
     age_container.extend(ages)
     
-    
+#Get the raw tokens from the loader
 raw_seq=[]
 for x, y in tqdm(loader, total=len(loader)):
     tbf = [train_dataset.itos[_] for _ in x.tolist()[0]]
     valid_until = tbf.index(-100) if -100 in tbf else 999
     seq = x.detach().cpu().numpy()[0]
-    seq=seq[:valid_until]
-#     print(seq)
-#     input()
-  
+    seq=seq[:valid_until]  
     for i in range(1, len(seq)+1):
         raw_seq.append(seq[:i])
         
-print(len(age_container), len(raw_seq))
+#Create one hot vectors for the raw tokens
 mat = np.full([len(raw_seq),59], -1)
 for idx, seq in enumerate(raw_seq):
     
@@ -140,6 +140,7 @@ mat_container = [torch.tensor(m.astype(np.float32)) for m in mat]
 if args.exp == "state":
     probe_class=3
 
+#Change input dim of probe to match the one hot vectors
 if args.twolayer:
     probe = BatteryProbeClassificationTwoLayer(device, probe_class=probe_class, num_task=64, mid_dim=args.mid_dim, input_dim=mat.shape[1])
 else:
@@ -173,6 +174,7 @@ probing_dataset = ProbingDataset(mat_container, property_container, age_containe
 train_size = int(0.8 * len(probing_dataset))
 test_size = len(probing_dataset) - train_size
 
+#Split the data consecutively so that no games end up in both train and test (well I guess one game will).
 if splitconsec:
     train_dataset= ProbingDataset(mat_container[:train_size], property_container[:train_size], age_container[:train_size])
     test_dataset = ProbingDataset(mat_container[train_size:], property_container[train_size:], age_container[train_size:])
