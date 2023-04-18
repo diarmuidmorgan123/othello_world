@@ -9,7 +9,9 @@ logging.basicConfig(
 
 # make deterministic
 from mingpt.utils import set_seed
-set_seed(42)
+import numpy as np
+seed=np.random.randint(0, 12389823)
+set_seed(seed)
 
 import time
 from tqdm import tqdm
@@ -41,6 +43,10 @@ parser.add_argument('--epo',
 parser.add_argument('--mid_dim',
                     default=128,
                     type=int)
+#Add arg for consecutive split
+parser.add_argument('--splitconsec',
+                    dest='splitconsec',
+                    action='store_true')
 
 parser.add_argument('--twolayer',
                     dest='twolayer', 
@@ -79,7 +85,7 @@ model = GPTforProbing(mconf, probe_layer=args.layer)
 if args.random:
     model.apply(model._init_weights)
 elif args.championship:
-    load_res = model.load_state_dict(torch.load("./ckpts/gpt_championship.ckpt"))
+    load_res = model.load_state_dict(torch.load("gpt_championship.ckpt"))
 else:  # trained on synthetic dataset
     load_res = model.load_state_dict(torch.load("./ckpts/gpt_synthetic.ckpt"))
 if torch.cuda.is_available():
@@ -136,10 +142,20 @@ class ProbingDataset(Dataset):
     def __getitem__(self, idx):
         return self.act[idx], torch.tensor(self.y[idx]).to(torch.long), torch.tensor(self.age[idx]).to(torch.long)
 
+splitconsec=args.splitconsec
+
 probing_dataset = ProbingDataset(act_container, property_container, age_container)
 train_size = int(0.8 * len(probing_dataset))
 test_size = len(probing_dataset) - train_size
-train_dataset, test_dataset = torch.utils.data.random_split(probing_dataset, [train_size, test_size])
+
+#Split data so that no two games end up in both the train and test (except for one game I guess)
+if splitconsec:
+    train_dataset= ProbingDataset(act_container[:train_size], property_container[:train_size], age_container[:train_size])
+    test_dataset = ProbingDataset(act_container[train_size:], property_container[train_size:], age_container[train_size:])
+
+else:
+    train_dataset, test_dataset = torch.utils.data.random_split(probing_dataset, [train_size, test_size])
+
 sampler = None
 train_loader = DataLoader(train_dataset, shuffle=False, sampler=sampler, pin_memory=True, batch_size=128, num_workers=1)
 test_loader = DataLoader(test_dataset, shuffle=True, pin_memory=True, batch_size=128, num_workers=1)
@@ -158,3 +174,12 @@ trainer = Trainer(probe, train_dataset, test_dataset, tconf)
 trainer.train(prt=True)
 trainer.save_traces()
 trainer.save_checkpoint()
+
+
+#write result to file
+acc = np.max(trainer.test_acc_cont)
+with open('results.txt', 'a') as handle:
+    
+    handle.write(f'probe-2-layer,{splitconsec},{acc},{seed}\n')
+    
+
